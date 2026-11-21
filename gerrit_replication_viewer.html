@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Gerrit Replication Log – Interaktiver Gantt- & Queue-Viewer</title>
+  <script src="https://plot.ly"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 20px;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .panel {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+    }
+    label { font-size: 14px; font-weight: 600; }
+    input[type="number"], input[type="text"] {
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    textarea {
+      width: 100%;
+      height: 110px;
+      margin-top: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      box-sizing: border-box;
+    }
+    .stats {
+      display: flex;
+      gap: 24px;
+      font-size: 14px;
+      margin-top: 10px;
+      color: #334155;
+    }
+    .stats b { color: #0f172a; }
+  </style>
+</head>
+<body>
+
+  <div class="panel">
+    <h2 style="margin-top:0;">Gerrit Replication Log – Gantt- & Queue-Analyzer</h2>
+    <div class="controls">
+      <div>
+        <label for="fileInput">Log-Datei wählen:</label>
+        <input type="file" id="fileInput" accept=".log,.txt,*" />
+      </div>
+      <div>
+        <label for="delayInput">replicationDelay (Sek.):</label>
+        <input type="number" id="delayInput" value="15" min="0" style="width:70px;" />
+      </div>
+      <div>
+        <label for="longThresh">Langläufer ab (Sek.):</label>
+        <input type="number" id="longThresh" value="10" min="1" style="width:70px;" />
+      </div>
+      <div>
+        <label for="remoteFilter">Remote-Filter (optional):</label>
+        <input type="text" id="remoteFilter" placeholder="z. B. mirror-eu" style="width:150px;" />
+      </div>
+      <button onclick="parseAndRender()">Auswerten & Zeichnen</button>
+    </div>
+
+    <textarea id="logText" placeholder="Oder füge hier direkt Zeilen aus deiner Gerrit replication_log ein..."></textarea>
+    <div class="stats" id="statsBar">Bereit. Lade eine Datei hoch oder füge Log-Zeilen ein.</div>
+  </div>
+
+  <div class="panel">
+    <div id="ganttChart" style="width:100%; height:720px;"></div>
+  </div>
+
+  <div class="panel">
+    <div id="queueChart" style="width:100%; height:320px;"></div>
+  </div>
+
+  <script>
+    document.getElementById("fileInput").addEventListener("change", function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        document.getElementById("logText").value = evt.target.result;
+        parseAndRender();
+      };
+      reader.readAsText(file);
+    });
+
+    function parseIsoTimestamp(tsStr) {
+      // Wandelt Gerrit-Format "2026-11-21T20:15:15,479+01:00" in gültiges JS-Date um
+      return new Date(tsStr.replace(",", "."));
+    }
+
+    function formatTime(d) {
+      const pad = (n, z = 2) => String(n).padStart(z, "0");
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+    }
+
+    function parseAndRender() {
+      const raw = document.getElementById("logText").value;
+      const configuredDelayMs = Number(document.getElementById("delayInput").value) * 1000;
+      const longThresholdS = Number(document.getElementById("longThresh").value);
+      const filterStr = document.getElementById("remoteFilter").value.trim();
+
+      const lines = raw.split(/\r?\n/);
+      const starts = new Map();
+      const tasks = [];
+
+      const reStart = /^\[(.*?)\]\s+Replication to\s+(\S+)\s+started\.\.\./;
+      const reDone  = /^\[(.*?)\]\s+Replication to\s+(\S+)\s+completed in\s+(\d+)ms(?:,\s*(\d+)ms delay)?/;
+
+      for (const line of lines) {
+        if (filterStr && !line.includes(filterStr)) continue;
+
+        const mStart = line.match(reStart);
+        if (mStart) {
+          const ts = parseIsoTimestamp(mStart[1]);
+          const uri = mStart[2];
+          if (!starts.has(uri)) starts.set(uri, []);
+          starts.get(uri).push(ts);
+          continue;
+        }
+
+        const mDone = line.match(reDone);
+        if (mDone) {
+          const endTs = parseIsoTimestamp(mDone[1]);
+          const uri = mDone[2];
+          const durMs = Number(mDone[3]);
+          const delayMs = mDone[4] ? Number(mDone[4]) : configuredDelayMs;
+
+          const startTs = (starts.has(uri) && starts.get(uri).length > 0)
+            ? starts.get(uri).shift()
+            : new Date(endTs.getTime() - durMs);
+
+          const repoName = uri.split("/").pop() || uri;
+          const extraWaitMs = Math.max(0, delayMs - configuredDelayMs);
+          const readyTs = new Date(startTs.getTime() - extraWaitMs);
+
+          tasks.push({
+            repo: repoName,
+            uri: uri,
+            ready: readyTs,
+            start: startTs,
+            end: endTs,
+            durS: durMs / 1000,
+            delayS: delayMs / 1000,
+            waitS: extraWaitMs / 1000
+          });
+        }
+      }
+
+      tasks.sort((a, b) => a.start - b.start);
+
+      if (tasks.length === 0) {
+        document.getElementById("statsBar").innerHTML = "<b>Keine vollständigen 'completed'-Einträge gefunden.</b>";
+        return;
+      }
+
+      // Queue-Stau über die aktiven Threads hinaus berechnen
+      const events = [];
+      for (const t of tasks) {
+        if (t.waitS > 0.05) {
+          events.push({ ts: t.ready.getTime(), delta: 1 });
+          events.push({ ts: t.start.getTime(), delta: -1 });
+        }
+      }
+      events.sort((a, b) => a.ts - b.ts || a.delta - b.delta);
+
+      const qX = [], qY = [];
+      let curQ = 0, maxQ = 0;
+      for (const ev of events) {
+        qX.push(new Date(ev.ts));
+        qY.push(curQ);
+        curQ += ev.delta;
+        if (curQ > maxQ) maxQ = curQ;
+        qX.push(new Date(ev.ts));
+        qY.push(curQ);
+      }
+
+      const longCount = tasks.filter(t => t.durS >= longThresholdS).length;
+      const maxWait = Math.max(...tasks.map(t => t.waitS));
+
+      document.getElementById("statsBar").innerHTML =
+        `<span>Ausgewertete Tasks: <b>${tasks.length}</b></span>` +
+        `<span>Langläufer (&ge;${longThresholdS}s): <b>${longCount}</b></span>` +
+        `<span>Max. Queue-Stau: <b>${maxQ} Tasks</b></span>` +
+        `<span>Max. Extra-Wartezeit: <b>${maxWait.toFixed(2)} s</b></span>`;
+
+      // 1. Horizontales Gantt-Diagramm (reine Bearbeitungszeit [start -> end])
+      let shownShort = false, shownLong = false;
+      const ganttTraces = tasks.map((t, idx) => {
+        const isLong = t.durS >= longThresholdS;
+        const showLegend = isLong ? !shownLong : !shownShort;
+        if (isLong) shownLong = true; else shownShort = true;
+
+        return {
+          type: "bar",
+          orientation: "h",
+          base: [t.start.getTime()],
+          x: [t.durS * 1000],
+          y: [`#${String(idx + 1).padStart(2, "0")} ${t.repo}`],
+          name: isLong ? `Langläufer (≥ ${longThresholdS} s)` : `Kurzläufer (< ${longThresholdS} s)`,
+          legendgroup: isLong ? "long" : "short",
+          showlegend: showLegend,
+          marker: { color: isLong ? "#ef4444" : "#3b82f6" },
+          customdata: [[
+            t.repo,
+            t.durS.toFixed(2),
+            t.waitS.toFixed(2),
+            formatTime(t.start),
+            formatTime(t.end)
+          ]],
+          hovertemplate:
+            "<b>%{customdata[0]}</b><br>" +
+            "Reine Dauer: <b>%{customdata[1]} s</b><br>" +
+            "Queue-Wartezeit: %{customdata[2]} s<br>" +
+            "Start: %{customdata[3]} | Ende: %{customdata[4]}<extra></extra>"
+        };
+      });
+
+      const chartHeight = Math.max(480, tasks.length * 24 + 140);
+      document.getElementById("ganttChart").style.height = chartHeight + "px";
+
+      Plotly.newPlot("ganttChart", ganttTraces, {
+        title: "Horizontale Zeitbalken: Reine Bearbeitungszeit (ohne replicationDelay)",
+        barmode: "overlay",
+        xaxis: { type: "date", title: "Zeitachse (Start- bis Endzeitpunkt)" },
+        yaxis: { autorange: "reversed", automargin: true },
+        hovermode: "closest",
+        margin: { l: 180, r: 30, t: 50, b: 50 }
+      }, { responsive: true });
+
+      // 2. Warteschlangen-Stau über die Zeit
+      Plotly.newPlot("queueChart", [{
+        x: qX,
+        y: qY,
+        mode: "lines",
+        line: { color: "#f59e0b", width: 2.5, shape: "hv" },
+        fill: "tozeroy",
+        fillcolor: "rgba(245, 158, 11, 0.2)",
+        name: "Aufgestaute Tasks",
+        hovertemplate: "Zeit: %{x|%H:%M:%S.%L}<br>Wartende Tasks in Queue: <b>%{y}</b><extra></extra>"
+      }], {
+        title: "Warteschlangen-Stau: Aufgestaute Tasks über die verfügbaren Threads hinaus",
+        xaxis: { type: "date", title: "Zeitachse" },
+        yaxis: { title: "Wartende Tasks", rangemode: "tozero", dtick: 1 },
+        margin: { l: 60, r: 30, t: 50, b: 50 }
+      }, { responsive: true });
+    }
+  </script>
+</body>
+</html>

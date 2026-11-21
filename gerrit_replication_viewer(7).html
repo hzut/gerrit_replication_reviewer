@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Gerrit Replication Log – Analyzer, Thread-Simulation & CSV-Export</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 20px; background: #f8fafc; color: #0f172a; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; background: #fff; padding: 14px 18px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 12px; }
+    .toolbar label { font-size: 13px; font-weight: 600; display: flex; flex-direction: column; gap: 4px; }
+    .toolbar input, .toolbar select, .toolbar button { padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; }
+    .toolbar button { background: #2563eb; color: #fff; border: none; cursor: pointer; font-weight: 600; align-self: flex-end; height: 32px; }
+    .toolbar button:hover { background: #1d4ed8; }
+    .toolbar button.secondary { background: #e2e8f0; color: #1e293b; }
+    .toolbar button.secondary:hover { background: #cbd5e1; }
+    .toolbar button.export { background: #059669; color: #fff; }
+    .toolbar button.export:hover { background: #047857; }
+    .stats { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; margin-bottom: 12px; color: #334155; background: #fff; padding: 10px 16px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+    .card { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 16px; position: relative; overflow-x: auto; }
+    #tooltip {
+      position: fixed; pointer-events: none; background: rgba(15, 23, 42, 0.96); color: #fff;
+      padding: 8px 12px; border-radius: 6px; font-size: 12px; line-height: 1.5;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2); display: none; z-index: 9999; max-width: 420px;
+    }
+    .legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; margin-bottom: 8px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    .sim-badge { background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; margin-left: 8px; }
+    .hint { font-size: 12px; color: #64748b; margin-left: auto; }
+    svg { user-select: none; }
+  </style>
+</head>
+<body>
+
+  <div id="tooltip"></div>
+
+  <div class="toolbar">
+    <label>
+      1. Gerrit replication_log wählen
+      <input type="file" id="fileInput" accept=".log,.txt,*" />
+    </label>
+    <label>
+      2. Remote-Filter
+      <select id="remoteFilter"><option value="ALL">Alle Remotes</option></select>
+    </label>
+    <label>
+      3. Repository-Suche
+      <input type="search" id="repoSearchInput" placeholder="z. B. service-01, mono..." style="width: 165px;" />
+    </label>
+    <label>
+      4. Status-Filter
+      <select id="statusFilter">
+        <option value="ALL">Alle Status (completed + failed)</option>
+        <option value="COMPLETED">Nur completed (ohne Retries)</option>
+        <option value="RETRIES">Mit Retries (retries &gt; 0)</option>
+        <option value="FAILED">Nur failed / abgelehnt</option>
+        <option value="ISSUES">Alle Probleme (failed + retries &gt; 0)</option>
+      </select>
+    </label>
+    <label>
+      5. Threads (Pool)
+      <input type="number" id="threadsInput" value="4" min="1" max="64" step="1" style="width: 70px;" />
+    </label>
+    <label>
+      6. Delay (s)
+      <input type="number" id="delayInput" value="15" min="0" step="1" style="width: 65px;" />
+    </label>
+    <label>
+      7. Langläufer (s)
+      <input type="number" id="longThreshInput" value="10" min="1" step="1" style="width: 70px;" />
+    </label>
+    <button id="renderBtn">Neu berechnen</button>
+    <button id="exportCsvBtn" class="export">CSV Export</button>
+  </div>
+
+  <div class="toolbar" style="padding: 10px 18px;">
+    <label>
+      Zeitfenster Von (HH:MM:SS)
+      <input type="text" id="zoomStartInput" placeholder="z. B. 20:15:20" style="width: 110px;" />
+    </label>
+    <label>
+      Zeitfenster Bis (HH:MM:SS)
+      <input type="text" id="zoomEndInput" placeholder="z. B. 20:16:05" style="width: 110px;" />
+    </label>
+    <button id="applyZoomBtn">Zeitfenster anwenden</button>
+    <button id="zoomInBtn" class="secondary">+ Zoom In</button>
+    <button id="zoomOutBtn" class="secondary">- Zoom Out</button>
+    <button id="resetZoomBtn" class="secondary">Reset (100 %)</button>
+    <label>
+      Sortierung (Einzel-Liste)
+      <select id="sortOrderSelect">
+        <option value="START_ASC">Startzeit (chronologisch)</option>
+        <option value="DUR_DESC">Längste Bearbeitungsdauer zuerst</option>
+        <option value="WAIT_DESC">Höchste Queue-Wartezeit zuerst</option>
+        <option value="REPO_ASC">Repository-Name (A–Z)</option>
+      </select>
+    </label>
+    <span class="hint">Maus ziehen im Chart = Zoom | Doppelklick = Reset</span>
+  </div>
+
+  <div class="stats" id="statsBar"></div>
+
+  <div class="card">
+    <div style="font-weight:700; margin-bottom:6px;">
+      Thread-Spur-Ansicht (Worker-Threads 1 bis <span id="threadCountTitle">4</span>)
+      <span class="sim-badge" id="simModeBadge">Original-Log</span>
+      <span class="sim-badge" id="zoomBadge" style="background:#f1f5f9;color:#475569;">100 % Ansicht</span>
+      <span class="sim-badge" id="searchBadge" style="display:none;background:#fae8ff;color:#86198f;"></span>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:#3b82f6;"></i> Kurzläufer (ok)</span>
+      <span><i class="dot" style="background:#ef4444;"></i> Langläufer (Thread-Blocker)</span>
+      <span><i class="dot" style="background:#f59e0b;"></i> Completed mit Retries (&gt; 0)</span>
+      <span><i class="dot" style="background:#991b1b;"></i> Failed / Abgebrochen</span>
+    </div>
+    <svg id="threadSvg"></svg>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:700; margin-bottom:6px;">Aufgestaute Tasks in der Queue (über die eingestellte Thread-Anzahl hinaus)</div>
+    <svg id="queueSvg"></svg>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:700; margin-bottom:6px;">
+      Einzelne Task-Liste: Reine Bearbeitungszeit (ohne replicationDelay)
+      <span class="sim-badge" id="sortBadge" style="background:#f1f5f9;color:#475569;">Sortierung: Startzeit</span>
+    </div>
+    <svg id="ganttSvg"></svg>
+  </div>
+
+  <script>
+    const SAMPLE_LOG = `[2026-11-21T20:15:15,479+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-01.git started...
+[2026-11-21T20:15:15,687+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-02.git started...
+[2026-11-21T20:15:15,850+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-03.git started...
+[2026-11-21T20:15:16,378+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-04.git started...
+[2026-11-21T20:15:18,957+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-01.git completed in 3478ms, 15002ms delay, 0 retries
+[2026-11-21T20:15:18,963+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-05.git started...
+[2026-11-21T20:15:20,146+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-03.git completed in 4296ms, 15004ms delay, 0 retries
+[2026-11-21T20:15:20,149+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-06.git started...
+[2026-11-21T20:15:21,052+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-04.git completed in 4674ms, 15003ms delay, 1 retries
+[2026-11-21T20:15:21,057+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-07.git started...
+[2026-11-21T20:15:21,850+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-05.git completed in 2887ms, 17298ms delay, 0 retries
+[2026-11-21T20:15:21,853+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-08.git started...
+[2026-11-21T20:15:24,295+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-07.git failed: [RemoteRefUpdate[remoteName=refs/heads/main, rejected, (none)..8f3c1a2, non-fast-forward]]
+[2026-11-21T20:15:24,297+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-09.git started...
+[2026-11-21T20:15:25,469+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-08.git completed in 3616ms, 19428ms delay, 0 retries
+[2026-11-21T20:15:25,472+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-10.git started...
+[2026-11-21T20:15:28,241+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-10.git completed in 2769ms, 16743ms delay, 2 retries
+[2026-11-21T20:15:28,247+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-11.git started...
+[2026-11-21T20:15:28,892+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-09.git completed in 4595ms, 15872ms delay, 0 retries
+[2026-11-21T20:15:28,895+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-12.git started...
+[2026-11-21T20:15:31,126+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-12.git completed in 2231ms, 18516ms delay, 0 retries
+[2026-11-21T20:15:31,129+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-13.git started...
+[2026-11-21T20:15:35,552+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-13.git completed in 4423ms, 20461ms delay, 0 retries
+[2026-11-21T20:15:35,557+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-14.git started...
+[2026-11-21T20:15:39,277+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-14.git completed in 3720ms, 24085ms delay, 0 retries
+[2026-11-21T20:15:39,280+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-15.git started...
+[2026-11-21T20:15:46,004+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-02.git completed in 30317ms, 15003ms delay, 0 retries
+[2026-11-21T20:15:46,010+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-16.git started...
+[2026-11-21T20:15:49,864+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-16.git completed in 3854ms, 33674ms delay, 0 retries
+[2026-11-21T20:15:49,867+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-17.git started...
+[2026-11-21T20:15:50,019+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-06.git completed in 29870ms, 18209ms delay, 0 retries
+[2026-11-21T20:15:50,021+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-18.git started...
+[2026-11-21T20:15:52,747+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-18.git completed in 2726ms, 37160ms delay, 1 retries
+[2026-11-21T20:15:52,752+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-19.git started...
+[2026-11-21T20:15:54,054+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-17.git completed in 4187ms, 37301ms delay, 0 retries
+[2026-11-21T20:15:54,059+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-20.git started...
+[2026-11-21T20:15:57,294+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-19.git completed in 4542ms, 39468ms delay, 0 retries
+[2026-11-21T20:15:57,296+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-21.git started...
+[2026-11-21T20:15:57,546+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-11.git completed in 29299ms, 18626ms delay, 0 retries
+[2026-11-21T20:15:57,550+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-22.git started...
+[2026-11-21T20:16:00,106+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-22.git completed in 2556ms, 30494ms delay, 0 retries
+[2026-11-21T20:16:00,108+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-23.git started...
+[2026-11-21T20:16:02,188+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-21.git failed: [RemoteRefUpdate[remoteName=refs/heads/main, rejected, 5c6d7e8..0a1b2c3, non-fast-forward]]
+[2026-11-21T20:16:02,190+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-24.git started...
+[2026-11-21T20:16:03,286+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-23.git completed in 3178ms, 32698ms delay, 0 retries
+[2026-11-21T20:16:03,292+01:00] Replication to git@mirror-eu.example.org:/srv/git/infra/monorepo.git started...
+[2026-11-21T20:16:06,851+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-24.git completed in 4661ms, 34073ms delay, 0 retries
+[2026-11-21T20:16:06,857+01:00] Replication to git@mirror-eu.example.org:/srv/git/core/engine.git started...
+[2026-11-21T20:16:08,800+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-15.git completed in 29520ms, 27176ms delay, 0 retries
+[2026-11-21T20:16:08,802+01:00] Replication to git@mirror-eu.example.org:/srv/git/data/pipeline.git started...
+[2026-11-21T20:16:11,129+01:00] Replication to git@mirror-eu.example.org:/srv/git/core/engine.git completed in 4272ms, 36830ms delay, 0 retries
+[2026-11-21T20:16:11,132+01:00] Replication to git@mirror-eu.example.org:/srv/git/mobile/ios-app.git started...
+[2026-11-21T20:16:11,360+01:00] Replication to git@mirror-eu.example.org:/srv/git/data/pipeline.git completed in 2558ms, 37556ms delay, 0 retries
+[2026-11-21T20:16:11,362+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-01.git started...
+[2026-11-21T20:16:13,469+01:00] Replication to git@mirror-eu.example.org:/srv/git/mobile/ios-app.git completed in 2337ms, 39017ms delay, 3 retries
+[2026-11-21T20:16:13,472+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-02.git started...
+[2026-11-21T20:16:16,097+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-02.git completed in 2625ms, 40418ms delay, 0 retries
+[2026-11-21T20:16:16,101+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-03.git started...
+[2026-11-21T20:16:20,362+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-03.git completed in 4261ms, 41882ms delay, 0 retries
+[2026-11-21T20:16:20,365+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-04.git started...
+[2026-11-21T20:16:23,741+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-04.git completed in 3376ms, 45150ms delay, 0 retries
+[2026-11-21T20:16:23,746+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-05.git started...
+[2026-11-21T20:16:25,893+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-20.git completed in 31834ms, 40337ms delay, 0 retries
+[2026-11-21T20:16:27,965+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-05.git completed in 4219ms, 47662ms delay, 0 retries
+[2026-11-21T20:16:32,421+01:00] Replication to git@mirror-eu.example.org:/srv/git/infra/monorepo.git completed in 29129ms, 34016ms delay, 0 retries
+[2026-11-21T20:16:44,857+01:00] Replication to git@mirror-eu.example.org:/srv/git/platform/service-01.git completed in 33495ms, 38934ms delay, 0 retries`;
+
+    let rawLogText = SAMPLE_LOG;
+    let zoomRange = null;
+    let globalMinT = 0;
+    let globalMaxT = 0;
+    let currentExportTasks = [];
+
+    const tooltip = document.getElementById("tooltip");
+
+    function showTip(evt, html) {
+      tooltip.innerHTML = html;
+      tooltip.style.display = "block";
+      tooltip.style.left = (evt.clientX + 14) + "px";
+      tooltip.style.top = (evt.clientY + 14) + "px";
+    }
+    function hideTip() { tooltip.style.display = "none"; }
+
+    function formatTime(ms) {
+      const d = new Date(ms);
+      const pad = (n, z = 2) => String(n).padStart(z, "0");
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+    }
+
+    function formatIsoLocal(ms) {
+      const d = new Date(ms);
+      const pad = (n, z = 2) => String(n).padStart(z, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${formatTime(ms)}`;
+    }
+
+    function parseTimeInput(str, referenceMs) {
+      if (!str) return null;
+      const clean = str.trim();
+      const m = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/);
+      if (!m) return null;
+      const d = new Date(referenceMs);
+      d.setHours(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3] || "0", 10), parseInt((m[4] || "0").padEnd(3, "0"), 10));
+      return d.getTime();
+    }
+
+    function parseLog(text) {
+      const starts = new Map();
+      const tasks = [];
+      const remotes = new Set();
+
+      const reStart = /^\[(.*?)\] Replication to (\S+) started\.\.\./;
+      const reDone  = /^\[(.*?)\] Replication to (\S+) completed in (\d+)ms(?:, (\d+)ms delay)?(?:, (\d+) retries)?/;
+      const reFail  = /^\[(.*?)\] Replication to (\S+) failed:\s*(.*)$/;
+
+      for (const line of text.split(/\r?\n/)) {
+        const mStart = line.match(reStart);
+        if (mStart) {
+          const ts = new Date(mStart[1].replace(",", ".")).getTime();
+          const uri = mStart[2];
+          if (!starts.has(uri)) starts.set(uri, []);
+          starts.get(uri).push(ts);
+          continue;
+        }
+
+        const mDone = line.match(reDone);
+        if (mDone) {
+          const endMs = new Date(mDone[1].replace(",", ".")).getTime();
+          const uri = mDone[2];
+          const durMs = parseInt(mDone[3], 10);
+          const delayMs = mDone[4] ? parseInt(mDone[4], 10) : 0;
+          const retries = mDone[5] ? parseInt(mDone[5], 10) : 0;
+
+          let startMs = endMs - durMs;
+          if (starts.has(uri) && starts.get(uri).length > 0) {
+            startMs = starts.get(uri).shift();
+          }
+
+          const remoteHost = uri.split(":")[0].split("/").slice(0, 3).join("/");
+          const repo = uri.split("/").pop();
+          remotes.add(remoteHost);
+
+          tasks.push({
+            uri, remoteHost, repo, startMs, endMs, durMs, delayMs,
+            status: "completed", retries, errorReason: ""
+          });
+          continue;
+        }
+
+        const mFail = line.match(reFail);
+        if (mFail) {
+          const endMs = new Date(mFail[1].replace(",", ".")).getTime();
+          const uri = mFail[2];
+          const errorReason = mFail[3] || "Unknown error";
+
+          let startMs = endMs - 1000;
+          if (starts.has(uri) && starts.get(uri).length > 0) {
+            startMs = starts.get(uri).shift();
+          }
+          const durMs = Math.max(100, endMs - startMs);
+
+          const remoteHost = uri.split(":")[0].split("/").slice(0, 3).join("/");
+          const repo = uri.split("/").pop();
+          remotes.add(remoteHost);
+
+          tasks.push({
+            uri, remoteHost, repo, startMs, endMs, durMs, delayMs: 0,
+            status: "failed", retries: 0, errorReason
+          });
+        }
+      }
+      return { tasks: tasks.sort((a, b) => a.startMs - b.startMs), remotes: Array.from(remotes) };
+    }
+
+    function detectOriginalThreads(sortedTasks) {
+      const laneEndTimes = [];
+      sortedTasks.forEach((t) => {
+        let lane = laneEndTimes.findIndex((endT) => endT <= t.startMs);
+        if (lane === -1) laneEndTimes.push(t.endMs);
+        else laneEndTimes[lane] = t.endMs;
+      });
+      return Math.max(1, laneEndTimes.length);
+    }
+
+    function simulateThreadPool(sortedTasks, numThreads, cfgDelayMs) {
+      const withReady = sortedTasks.map((t) => {
+        const origWaitMs = Math.max(0, t.delayMs - cfgDelayMs);
+        const readyMs = t.startMs - origWaitMs;
+        return { ...t, readyMs };
+      }).sort((a, b) => a.readyMs - b.readyMs || a.startMs - b.startMs);
+
+      const laneFreeAt = new Array(numThreads).fill(0);
+
+      return withReady.map((t) => {
+        let bestLane = 0;
+        for (let i = 1; i < numThreads; i++) {
+          if (laneFreeAt[i] < laneFreeAt[bestLane]) bestLane = i;
+        }
+        const simStartMs = Math.max(t.readyMs, laneFreeAt[bestLane]);
+        const simEndMs = simStartMs + t.durMs;
+        const simWaitMs = Math.max(0, simStartMs - t.readyMs);
+        laneFreeAt[bestLane] = simEndMs;
+
+        return { ...t, threadIndex: bestLane, simStartMs, simEndMs, simWaitMs };
+      }).sort((a, b) => a.simStartMs - b.simStartMs);
+    }
+
+    function sortTasksForList(tasks, sortMode) {
+      const copy = [...tasks];
+      if (sortMode === "DUR_DESC") {
+        copy.sort((a, b) => b.durMs - a.durMs || a.simStartMs - b.simStartMs);
+      } else if (sortMode === "WAIT_DESC") {
+        copy.sort((a, b) => b.simWaitMs - a.simWaitMs || a.simStartMs - b.simStartMs);
+      } else if (sortMode === "REPO_ASC") {
+        copy.sort((a, b) => a.repo.localeCompare(b.repo) || a.simStartMs - b.simStartMs);
+      } else {
+        copy.sort((a, b) => a.simStartMs - b.simStartMs);
+      }
+      return copy;
+    }
+
+    function getBarColor(t, longThreshMs) {
+      if (t.status === "failed") return "#991b1b";
+      if (t.retries > 0) return "#f59e0b";
+      if (t.durMs >= longThreshMs) return "#ef4444";
+      return "#3b82f6";
+    }
+
+    function buildTooltipHtml(t) {
+      const statusBadge = t.status === "failed"
+        ? `<span style="color:#fca5a5;font-weight:700;">FAILED</span>`
+        : (t.retries > 0
+            ? `<span style="color:#fcd34d;font-weight:700;">COMPLETED (${t.retries} Retries)</span>`
+            : `<span style="color:#93c5fd;font-weight:700;">COMPLETED (0 Retries)</span>`);
+
+      let html = `<b>${t.repo}</b> (Thread #${t.threadIndex + 1})<br>` +
+                 `Status: ${statusBadge}<br>` +
+                 `Reine Dauer: <b>${(t.durMs / 1000).toFixed(2)} s</b><br>` +
+                 `Queue-Wartezeit: <b>${(t.simWaitMs / 1000).toFixed(2)} s</b><br>` +
+                 `Start: ${formatTime(t.simStartMs)} | Ende: ${formatTime(t.simEndMs)}<br>` +
+                 `<span style="color:#94a3b8;font-size:11px;">${t.uri}</span>`;
+
+      if (t.errorReason) {
+        html += `<br><span style="color:#fca5a5;">Fehler: ${t.errorReason}</span>`;
+      }
+      return html;
+    }
+
+    function svgEl(tag, attrs = {}) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return el;
+    }
+
+    function attachBrushZoom(svg, leftPad, rightPad, topPad, height, botPad, viewMinT, viewMaxT) {
+      let dragging = false;
+      let startX = 0;
+
+      const selBox = svgEl("rect", {
+        x: 0, y: topPad, width: 0, height: height - topPad - botPad,
+        fill: "rgba(37, 99, 235, 0.18)", stroke: "#2563eb", "stroke-dasharray": "4,2",
+        display: "none", style: "pointer-events:none;"
+      });
+      svg.appendChild(selBox);
+
+      const getSvgX = (evt) => {
+        const rect = svg.getBoundingClientRect();
+        return evt.clientX - rect.left;
+      };
+
+      const plotLeft = leftPad;
+      const plotRight = parseFloat(svg.getAttribute("width")) - rightPad;
+      const plotW = plotRight - plotLeft;
+
+      svg.addEventListener("mousedown", (evt) => {
+        const x = getSvgX(evt);
+        if (x < plotLeft || x > plotRight) return;
+        dragging = true;
+        startX = x;
+        selBox.setAttribute("x", x);
+        selBox.setAttribute("width", 0);
+        selBox.setAttribute("display", "block");
+      });
+
+      svg.addEventListener("mousemove", (evt) => {
+        if (!dragging) return;
+        const curX = Math.max(plotLeft, Math.min(plotRight, getSvgX(evt)));
+        const x1 = Math.min(startX, curX);
+        const x2 = Math.max(startX, curX);
+        selBox.setAttribute("x", x1);
+        selBox.setAttribute("width", x2 - x1);
+      });
+
+      window.addEventListener("mouseup", (evt) => {
+        if (!dragging) return;
+        dragging = false;
+        selBox.setAttribute("display", "none");
+        const endX = Math.max(plotLeft, Math.min(plotRight, getSvgX(evt)));
+        const x1 = Math.min(startX, endX);
+        const x2 = Math.max(startX, endX);
+        if (x2 - x1 > 12) {
+          const span = viewMaxT - viewMinT;
+          const newStart = viewMinT + ((x1 - plotLeft) / plotW) * span;
+          const newEnd   = viewMinT + ((x2 - plotLeft) / plotW) * span;
+          zoomRange = { startMs: newStart, endMs: newEnd };
+          renderAll(false);
+        }
+      });
+
+      svg.addEventListener("dblclick", () => {
+        zoomRange = null;
+        renderAll(false);
+      });
+    }
+
+    function exportTasksToCsv(tasks, numThreads, cfgDelayMs) {
+      if (!tasks || tasks.length === 0) return;
+      const headers = [
+        "Index",
+        "Repository",
+        "URI",
+        "Status",
+        "Retries",
+        "Thread_Nr",
+        "Pool_Threads",
+        "Bereit_Zeit",
+        "Start_Zeit",
+        "Ende_Zeit",
+        "Reine_Dauer_ms",
+        "Reine_Dauer_s",
+        "Queue_Wartezeit_ms",
+        "Queue_Wartezeit_s",
+        "Konfig_Delay_s",
+        "Fehlergrund"
+      ];
+
+      const escapeCsv = (val) => {
+        const s = String(val ?? "");
+        if (s.includes(";") || s.includes('"') || s.includes("\n")) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      };
+
+      const rows = tasks.map((t, idx) => [
+        idx + 1,
+        t.repo,
+        t.uri,
+        t.status,
+        t.retries,
+        t.threadIndex + 1,
+        numThreads,
+        formatIsoLocal(t.readyMs),
+        formatIsoLocal(t.simStartMs),
+        formatIsoLocal(t.simEndMs),
+        Math.round(t.durMs),
+        (t.durMs / 1000).toFixed(3).replace(".", ","),
+        Math.round(t.simWaitMs),
+        (t.simWaitMs / 1000).toFixed(3).replace(".", ","),
+        (cfgDelayMs / 1000).toFixed(0),
+        t.errorReason
+      ].map(escapeCsv).join(";"));
+
+      const csvContent = "\uFEFF" + headers.join(";") + "\n" + rows.join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gerrit_replication_export_${numThreads}threads.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function renderAll(autoReset = false) {
+      const { tasks, remotes } = parseLog(rawLogText);
+      const sel = document.getElementById("remoteFilter");
+      const prev = sel.value;
+      sel.innerHTML = `<option value="ALL">Alle Remotes (${remotes.length})</option>`;
+      remotes.forEach(r => {
+        const opt = document.createElement("option");
+        opt.value = r;
+        opt.textContent = r;
+        sel.appendChild(opt);
+      });
+      if (remotes.includes(prev)) sel.value = prev;
+
+      const selectedRemote = sel.value;
+      const statusMode = document.getElementById("statusFilter").value;
+      const searchQuery = document.getElementById("repoSearchInput").value.trim().toLowerCase();
+      const sortMode = document.getElementById("sortOrderSelect").value;
+
+      const remoteTasks = selectedRemote === "ALL" ? tasks : tasks.filter(t => t.remoteHost === selectedRemote);
+      if (remoteTasks.length === 0) return;
+
+      const detectedThreads = detectOriginalThreads(remoteTasks);
+      const threadsInput = document.getElementById("threadsInput");
+      if (autoReset) {
+        threadsInput.value = detectedThreads;
+        zoomRange = null;
+      }
+
+      const numThreads = Math.max(1, Math.min(64, parseInt(threadsInput.value, 10) || detectedThreads));
+      const cfgDelayMs = (parseFloat(document.getElementById("delayInput").value) || 0) * 1000;
+      const longThreshMs = (parseFloat(document.getElementById("longThreshInput").value) || 10) * 1000;
+
+      const allSimTasks = simulateThreadPool(remoteTasks, numThreads, cfgDelayMs);
+
+      globalMinT = Math.min(...allSimTasks.map(t => t.simStartMs));
+      globalMaxT = Math.max(...allSimTasks.map(t => t.simEndMs));
+
+      const viewMinT = zoomRange ? Math.max(globalMinT, zoomRange.startMs) : globalMinT;
+      const viewMaxT = zoomRange ? Math.min(globalMaxT, zoomRange.endMs) : globalMaxT;
+      const spanT = Math.max(500, viewMaxT - viewMinT);
+
+      document.getElementById("zoomStartInput").value = formatTime(viewMinT).slice(0, 8);
+      document.getElementById("zoomEndInput").value   = formatTime(viewMaxT).slice(0, 8);
+
+      const zoomPct = Math.round(((globalMaxT - globalMinT) / spanT) * 100);
+      const zBadge = document.getElementById("zoomBadge");
+      if (!zoomRange) {
+        zBadge.textContent = "100 % Ansicht";
+        zBadge.style.background = "#f1f5f9";
+        zBadge.style.color = "#475569";
+      } else {
+        zBadge.textContent = `Zoom: ${zoomPct} % (${formatTime(viewMinT).slice(0, 8)} – ${formatTime(viewMaxT).slice(0, 8)})`;
+        zBadge.style.background = "#dcfce7";
+        zBadge.style.color = "#166534";
+      }
+
+      const sBadge = document.getElementById("searchBadge");
+      if (searchQuery) {
+        sBadge.textContent = `Suche: "${searchQuery}"`;
+        sBadge.style.display = "inline-block";
+      } else {
+        sBadge.style.display = "none";
+      }
+
+      const sortLabels = {
+        START_ASC: "Startzeit",
+        DUR_DESC: "Längste Bearbeitungsdauer",
+        WAIT_DESC: "Höchste Queue-Wartezeit",
+        REPO_ASC: "Repository-Name (A–Z)"
+      };
+      document.getElementById("sortBadge").textContent = `Sortierung: ${sortLabels[sortMode] || "Startzeit"}`;
+
+      const visibleTasks = allSimTasks.filter((t) => {
+        const inTime = t.simEndMs >= viewMinT && t.simStartMs <= viewMaxT;
+        if (!inTime) return false;
+        if (searchQuery && !t.repo.toLowerCase().includes(searchQuery) && !t.uri.toLowerCase().includes(searchQuery)) {
+          return false;
+        }
+        if (statusMode === "COMPLETED") return t.status === "completed" && t.retries === 0;
+        if (statusMode === "RETRIES")   return t.retries > 0;
+        if (statusMode === "FAILED")    return t.status === "failed";
+        if (statusMode === "ISSUES")    return t.status === "failed" || t.retries > 0;
+        return true;
+      });
+
+      const sortedVisibleTasks = sortTasksForList(visibleTasks, sortMode);
+      currentExportTasks = sortedVisibleTasks;
+
+      document.getElementById("threadCountTitle").textContent = numThreads;
+      const badge = document.getElementById("simModeBadge");
+      if (numThreads === detectedThreads) {
+        badge.textContent = `Original-Log (${detectedThreads} Threads erkannt)`;
+        badge.style.background = "#dbeafe";
+        badge.style.color = "#1e40af";
+      } else {
+        badge.textContent = `Simulation: ${numThreads} Threads (Original: ${detectedThreads})`;
+        badge.style.background = "#fef3c7";
+        badge.style.color = "#92400e";
+      }
+
+      const failedCount = visibleTasks.filter(t => t.status === "failed").length;
+      const retryCount  = visibleTasks.filter(t => t.retries > 0).length;
+      const longCount   = visibleTasks.filter(t => t.durMs >= longThreshMs && t.status === "completed").length;
+
+      const leftPad = 175, rightPad = 30, topPad = 15, botPad = 35;
+      const width = 1100;
+      const plotW = width - leftPad - rightPad;
+      const xScale = (t) => leftPad + ((t - viewMinT) / spanT) * plotW;
+      const ticks = 8;
+
+      function addClip(svg, clipId, h) {
+        const defs = svgEl("defs");
+        const cp = svgEl("clipPath", { id: clipId });
+        cp.appendChild(svgEl("rect", { x: leftPad, y: topPad, width: plotW, height: h - topPad - botPad }));
+        defs.appendChild(cp);
+        svg.appendChild(defs);
+      }
+
+      // 1. Thread-Spur-Ansicht (Thread 1 bis N)
+      const tSvg = document.getElementById("threadSvg");
+      tSvg.innerHTML = "";
+      const laneH = 38;
+      const tHeight = topPad + botPad + numThreads * laneH;
+      tSvg.setAttribute("width", width);
+      tSvg.setAttribute("height", tHeight);
+      addClip(tSvg, "clipThread", tHeight);
+
+      for (let i = 0; i <= ticks; i++) {
+        const tVal = viewMinT + (spanT * i) / ticks;
+        const x = xScale(tVal);
+        tSvg.appendChild(svgEl("line", { x1: x, y1: topPad, x2: x, y2: tHeight - botPad, stroke: "#e2e8f0" }));
+        const lbl = svgEl("text", { x: x, y: tHeight - 12, "text-anchor": "middle", "font-size": "11", fill: "#475569" });
+        lbl.textContent = formatTime(tVal).slice(0, 8);
+        tSvg.appendChild(lbl);
+      }
+
+      for (let lane = 0; lane < numThreads; lane++) {
+        const y = topPad + lane * laneH;
+        tSvg.appendChild(svgEl("rect", {
+          x: leftPad, y: y + 2, width: plotW, height: laneH - 4, rx: 4,
+          fill: lane % 2 === 0 ? "#f8fafc" : "#f1f5f9"
+        }));
+        const laneLbl = svgEl("text", {
+          x: leftPad - 10, y: y + laneH / 2 + 4,
+          "text-anchor": "end", "font-size": "12", "font-weight": "700", fill: "#1e293b"
+        });
+        laneLbl.textContent = `Thread #${lane + 1}`;
+        tSvg.appendChild(laneLbl);
+      }
+
+      const tGroup = svgEl("g", { "clip-path": "url(#clipThread)" });
+      visibleTasks.forEach((t) => {
+        const y = topPad + t.threadIndex * laneH;
+        const x1 = xScale(t.simStartMs);
+        const w = Math.max(4, xScale(t.simEndMs) - x1);
+
+        const rect = svgEl("rect", {
+          x: x1, y: y + 6, width: w, height: laneH - 12, rx: 4,
+          fill: getBarColor(t, longThreshMs), stroke: "#ffffff", "stroke-width": "1",
+          style: "cursor:pointer;"
+        });
+
+        const tipHtml = buildTooltipHtml(t);
+        rect.addEventListener("mousemove", (e) => showTip(e, tipHtml));
+        rect.addEventListener("mouseleave", hideTip);
+        tGroup.appendChild(rect);
+
+        const visibleX = Math.max(leftPad + 6, x1 + 6);
+        const visibleW = Math.min(leftPad + plotW, x1 + w) - visibleX;
+        if (visibleW > 55) {
+          const barTxt = svgEl("text", {
+            x: visibleX, y: y + laneH / 2 + 4, "font-size": "11", "font-weight": "600",
+            fill: "#ffffff", style: "pointer-events:none;"
+          });
+          barTxt.textContent = t.repo.replace(".git", "");
+          tGroup.appendChild(barTxt);
+        }
+      });
+      tSvg.appendChild(tGroup);
+      attachBrushZoom(tSvg, leftPad, rightPad, topPad, tHeight, botPad, viewMinT, viewMaxT);
+
+      // 2. Warteschlangen-SVG zeichnen
+      const qEvents = [];
+      let maxWaitMs = 0;
+      allSimTasks.forEach(t => {
+        if (t.simEndMs >= viewMinT && t.simStartMs <= viewMaxT && t.simWaitMs > maxWaitMs) {
+          maxWaitMs = t.simWaitMs;
+        }
+        if (t.simWaitMs > 10) {
+          qEvents.push({ ts: t.readyMs, delta: 1 });
+          qEvents.push({ ts: t.simStartMs, delta: -1 });
+        }
+      });
+      qEvents.sort((a, b) => a.ts - b.ts || a.delta - b.delta);
+
+      const pts = [];
+      let curQ = 0, peakQ = 0;
+      pts.push({ ts: globalMinT, q: 0 });
+      qEvents.forEach(ev => {
+        pts.push({ ts: ev.ts, q: curQ });
+        curQ += ev.delta;
+        if (ev.ts >= viewMinT && ev.ts <= viewMaxT && curQ > peakQ) peakQ = curQ;
+        pts.push({ ts: ev.ts, q: curQ });
+      });
+      pts.push({ ts: globalMaxT, q: 0 });
+
+      const qSvg = document.getElementById("queueSvg");
+      qSvg.innerHTML = "";
+      const qH = 210, qTop = 15, qBot = 35;
+      const qPlotH = qH - qTop - qBot;
+      qSvg.setAttribute("width", width);
+      qSvg.setAttribute("height", qH);
+      addClip(qSvg, "clipQueue", qH);
+
+      const maxY = Math.max(4, peakQ + 1);
+      const yScale = (q) => qTop + qPlotH - (q / maxY) * qPlotH;
+
+      for (let q = 0; q <= maxY; q += Math.max(1, Math.ceil(maxY / 5))) {
+        const y = yScale(q);
+        qSvg.appendChild(svgEl("line", { x1: leftPad, y1: y, x2: width - rightPad, y2: y, stroke: "#e2e8f0" }));
+        const lbl = svgEl("text", { x: leftPad - 8, y: y + 4, "text-anchor": "end", "font-size": "11", fill: "#475569" });
+        lbl.textContent = q;
+        qSvg.appendChild(lbl);
+      }
+
+      for (let i = 0; i <= ticks; i++) {
+        const tVal = viewMinT + (spanT * i) / ticks;
+        const x = xScale(tVal);
+        const lbl = svgEl("text", { x: x, y: qH - 12, "text-anchor": "middle", "font-size": "11", fill: "#475569" });
+        lbl.textContent = formatTime(tVal).slice(0, 8);
+        qSvg.appendChild(lbl);
+      }
+
+      const qGroup = svgEl("g", { "clip-path": "url(#clipQueue)" });
+      const polyPts = pts.map(p => `${xScale(p.ts)},${yScale(p.q)}`).join(" ");
+      const areaPts = `${xScale(globalMinT)},${yScale(0)} ` + polyPts + ` ${xScale(globalMaxT)},${yScale(0)}`;
+
+      qGroup.appendChild(svgEl("polygon", { points: areaPts, fill: "rgba(245, 158, 11, 0.25)" }));
+      qGroup.appendChild(svgEl("polyline", { points: polyPts, fill: "none", stroke: "#f59e0b", "stroke-width": "2.5" }));
+      qSvg.appendChild(qGroup);
+      attachBrushZoom(qSvg, leftPad, rightPad, qTop, qH, qBot, viewMinT, viewMaxT);
+
+      // 3. Einzelne Task-Liste (sortiert nach gewähltem Kriterium)
+      const gSvg = document.getElementById("ganttSvg");
+      gSvg.innerHTML = "";
+      const rowH = 22;
+      const gHeight = topPad + botPad + Math.max(1, sortedVisibleTasks.length) * rowH;
+      gSvg.setAttribute("width", width);
+      gSvg.setAttribute("height", gHeight);
+      addClip(gSvg, "clipGantt", gHeight);
+
+      for (let i = 0; i <= ticks; i++) {
+        const tVal = viewMinT + (spanT * i) / ticks;
+        const x = xScale(tVal);
+        gSvg.appendChild(svgEl("line", { x1: x, y1: topPad, x2: x, y2: gHeight - botPad, stroke: "#e2e8f0" }));
+        const lbl = svgEl("text", { x: x, y: gHeight - 12, "text-anchor": "middle", "font-size": "11", fill: "#475569" });
+        lbl.textContent = formatTime(tVal).slice(0, 8);
+        gSvg.appendChild(lbl);
+      }
+
+      if (sortedVisibleTasks.length === 0) {
+        const emptyTxt = svgEl("text", { x: leftPad + 10, y: topPad + 15, "font-size": "12", fill: "#64748b" });
+        emptyTxt.textContent = "Keine Einträge für die gewählten Filter / Suchbegriffe gefunden.";
+        gSvg.appendChild(emptyTxt);
+      } else {
+        const gGroup = svgEl("g", { "clip-path": "url(#clipGantt)" });
+        sortedVisibleTasks.forEach((t, idx) => {
+          const y = topPad + idx * rowH;
+          const suffix = t.status === "failed" ? " [FAILED]" : (t.retries > 0 ? ` [${t.retries}x Retry]` : "");
+
+          const rowLabel = svgEl("text", {
+            x: leftPad - 8, y: y + 14, "text-anchor": "end", "font-size": "11",
+            fill: t.status === "failed" ? "#991b1b" : "#1e293b",
+            "font-weight": t.status === "failed" || t.retries > 0 ? "700" : "400"
+          });
+          rowLabel.textContent = `#${String(idx + 1).padStart(2, "0")} ${t.repo}${suffix}`;
+          gSvg.appendChild(rowLabel);
+
+          const x1 = xScale(t.simStartMs);
+          const w = Math.max(4, xScale(t.simEndMs) - x1);
+          const rect = svgEl("rect", {
+            x: x1, y: y + 3, width: w, height: 15, rx: 3,
+            fill: getBarColor(t, longThreshMs), style: "cursor:pointer;"
+          });
+
+          const tipHtml = buildTooltipHtml(t);
+          rect.addEventListener("mousemove", (e) => showTip(e, tipHtml));
+          rect.addEventListener("mouseleave", hideTip);
+          gGroup.appendChild(rect);
+        });
+        gSvg.appendChild(gGroup);
+      }
+      attachBrushZoom(gSvg, leftPad, rightPad, topPad, gHeight, botPad, viewMinT, viewMaxT);
+
+      document.getElementById("statsBar").innerHTML =
+        `<span><b>Angezeigt:</b> ${visibleTasks.length} / ${allSimTasks.length} Tasks</span>` +
+        `<span><b>Failed:</b> <span style="color:#991b1b;font-weight:700;">${failedCount}</span></span>` +
+        `<span><b>Mit Retries:</b> <span style="color:#b45309;font-weight:700;">${retryCount}</span></span>` +
+        `<span><b>Langläufer:</b> ${longCount}</span>` +
+        `<span><b>Max. Queue-Stau (Fenster):</b> ${peakQ} Tasks</span>` +
+        `<span><b>Max. Wartezeit (Fenster):</b> ${(maxWaitMs / 1000).toFixed(2)} s</span>`;
+    }
+
+    document.getElementById("exportCsvBtn").addEventListener("click", () => {
+      const numThreads = parseInt(document.getElementById("threadsInput").value, 10) || 4;
+      const cfgDelayMs = (parseFloat(document.getElementById("delayInput").value) || 0) * 1000;
+      exportTasksToCsv(currentExportTasks, numThreads, cfgDelayMs);
+    });
+
+    document.getElementById("applyZoomBtn").addEventListener("click", () => {
+      const sMs = parseTimeInput(document.getElementById("zoomStartInput").value, globalMinT);
+      const eMs = parseTimeInput(document.getElementById("zoomEndInput").value, globalMaxT);
+      if (sMs !== null && eMs !== null && eMs > sMs) {
+        zoomRange = { startMs: sMs, endMs: eMs };
+        renderAll(false);
+      }
+    });
+
+    document.getElementById("zoomInBtn").addEventListener("click", () => {
+      const curStart = zoomRange ? zoomRange.startMs : globalMinT;
+      const curEnd   = zoomRange ? zoomRange.endMs : globalMaxT;
+      const span = curEnd - curStart;
+      if (span <= 2000) return;
+      zoomRange = { startMs: curStart + span * 0.2, endMs: curEnd - span * 0.2 };
+      renderAll(false);
+    });
+
+    document.getElementById("zoomOutBtn").addEventListener("click", () => {
+      if (!zoomRange) return;
+      const span = zoomRange.endMs - zoomRange.startMs;
+      const newStart = Math.max(globalMinT, zoomRange.startMs - span * 0.35);
+      const newEnd   = Math.min(globalMaxT, zoomRange.endMs + span * 0.35);
+      if (newStart <= globalMinT && newEnd >= globalMaxT) zoomRange = null;
+      else zoomRange = { startMs: newStart, endMs: newEnd };
+      renderAll(false);
+    });
+
+    document.getElementById("resetZoomBtn").addEventListener("click", () => {
+      zoomRange = null;
+      renderAll(false);
+    });
+
+    document.getElementById("fileInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => { rawLogText = ev.target.result; renderAll(true); };
+      reader.readAsText(file);
+    });
+
+    document.getElementById("sortOrderSelect").addEventListener("change", () => renderAll(false));
+    document.getElementById("repoSearchInput").addEventListener("input", () => renderAll(false));
+    document.getElementById("statusFilter").addEventListener("change", () => renderAll(false));
+    document.getElementById("threadsInput").addEventListener("change", () => renderAll(false));
+    document.getElementById("delayInput").addEventListener("change", () => renderAll(false));
+    document.getElementById("longThreshInput").addEventListener("change", () => renderAll(false));
+    document.getElementById("renderBtn").addEventListener("click", () => renderAll(false));
+    document.getElementById("remoteFilter").addEventListener("change", () => renderAll(true));
+    renderAll(true);
+  </script>
+</body>
+</html>

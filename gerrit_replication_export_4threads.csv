@@ -1,0 +1,34 @@
+﻿Index;Repository;URI;Status;Retries;Thread_Nr;Pool_Threads;Bereit_Zeit;Start_Zeit;Ende_Zeit;Reine_Dauer_ms;Reine_Dauer_s;Queue_Wartezeit_ms;Queue_Wartezeit_s;Konfig_Delay_s;Fehlergrund
+1;service-01.git;git@mirror-eu.example.org:/srv/git/platform/service-01.git;completed;0;1;4;2026-11-21 20:15:15.477;2026-11-21 20:15:15.477;2026-11-21 20:15:18.955;3478;3,478;0;0,000;15;
+2;service-02.git;git@mirror-eu.example.org:/srv/git/platform/service-02.git;completed;0;2;4;2026-11-21 20:15:15.684;2026-11-21 20:15:15.684;2026-11-21 20:15:46.001;30317;30,317;0;0,000;15;
+3;service-03.git;git@mirror-eu.example.org:/srv/git/platform/service-03.git;completed;0;3;4;2026-11-21 20:15:15.846;2026-11-21 20:15:15.846;2026-11-21 20:15:20.142;4296;4,296;0;0,000;15;
+4;service-04.git;git@mirror-eu.example.org:/srv/git/platform/service-04.git;completed;1;4;4;2026-11-21 20:15:16.375;2026-11-21 20:15:16.375;2026-11-21 20:15:21.049;4674;4,674;0;0,000;15;
+5;service-05.git;git@mirror-eu.example.org:/srv/git/platform/service-05.git;completed;0;1;4;2026-11-21 20:15:16.665;2026-11-21 20:15:18.955;2026-11-21 20:15:21.842;2887;2,887;2290;2,290;15;
+6;service-06.git;git@mirror-eu.example.org:/srv/git/platform/service-06.git;completed;0;3;4;2026-11-21 20:15:16.940;2026-11-21 20:15:20.142;2026-11-21 20:15:50.012;29870;29,870;3202;3,202;15;
+7;service-08.git;git@mirror-eu.example.org:/srv/git/platform/service-08.git;completed;0;4;4;2026-11-21 20:15:17.425;2026-11-21 20:15:21.049;2026-11-21 20:15:24.665;3616;3,616;3624;3,624;15;
+8;service-07.git;git@mirror-eu.example.org:/srv/git/platform/service-07.git;failed;0;1;4;2026-11-21 20:15:21.057;2026-11-21 20:15:21.842;2026-11-21 20:15:25.080;3238;3,238;785;0,785;15;[RemoteRefUpdate[remoteName=refs/heads/main, rejected, (none)..8f3c1a2, non-fast-forward]]
+9;service-09.git;git@mirror-eu.example.org:/srv/git/platform/service-09.git;completed;0;4;4;2026-11-21 20:15:23.425;2026-11-21 20:15:24.665;2026-11-21 20:15:29.260;4595;4,595;1240;1,240;15;
+10;service-10.git;git@mirror-eu.example.org:/srv/git/platform/service-10.git;completed;2;1;4;2026-11-21 20:15:23.729;2026-11-21 20:15:25.080;2026-11-21 20:15:27.849;2769;2,769;1351;1,351;15;
+11;service-11.git;git@mirror-eu.example.org:/srv/git/platform/service-11.git;completed;0;1;4;2026-11-21 20:15:24.621;2026-11-21 20:15:27.849;2026-11-21 20:15:57.148;29299;29,299;3228;3,228;15;
+12;service-12.git;git@mirror-eu.example.org:/srv/git/platform/service-12.git;completed;0;4;4;2026-11-21 20:15:25.379;2026-11-21 20:15:29.260;2026-11-21 20:15:31.491;2231;2,231;3881;3,881;15;
+13;service-13.git;git@mirror-eu.example.org:/srv/git/platform/service-13.git;completed;0;4;4;2026-11-21 20:15:25.668;2026-11-21 20:15:31.491;2026-11-21 20:15:35.914;4423;4,423;5823;5,823;15;
+14;service-14.git;git@mirror-eu.example.org:/srv/git/platform/service-14.git;completed;0;4;4;2026-11-21 20:15:26.472;2026-11-21 20:15:35.914;2026-11-21 20:15:39.634;3720;3,720;9442;9,442;15;
+15;service-15.git;git@mirror-eu.example.org:/srv/git/platform/service-15.git;completed;0;4;4;2026-11-21 20:15:27.104;2026-11-21 20:15:39.634;2026-11-21 20:16:09.154;29520;29,520;12530;12,530;15;
+16;service-16.git;git@mirror-eu.example.org:/srv/git/platform/service-16.git;completed;0;2;4;2026-11-21 20:15:27.336;2026-11-21 20:15:46.001;2026-11-21 20:15:49.855;3854;3,854;18665;18,665;15;
+17;service-17.git;git@mirror-eu.example.org:/srv/git/platform/service-17.git;completed;0;2;4;2026-11-21 20:15:27.566;2026-11-21 20:15:49.855;2026-11-21 20:15:54.042;4187;4,187;22289;22,289;15;
+18;service-18.git;git@mirror-eu.example.org:/srv/git/platform/service-18.git;completed;1;3;4;2026-11-21 20:15:27.861;2026-11-21 20:15:50.012;2026-11-21 20:15:52.738;2726;2,726;22151;22,151;15;
+19;service-19.git;git@mirror-eu.example.org:/srv/git/platform/service-19.git;completed;0;3;4;2026-11-21 20:15:28.284;2026-11-21 20:15:52.738;2026-11-21 20:15:57.280;4542;4,542;24454;24,454;15;
+20;service-20.git;git@mirror-eu.example.org:/srv/git/platform/service-20.git;completed;0;2;4;2026-11-21 20:15:28.722;2026-11-21 20:15:54.042;2026-11-21 20:16:25.876;31834;31,834;25320;25,320;15;
+21;service-22.git;git@mirror-eu.example.org:/srv/git/platform/service-22.git;completed;0;1;4;2026-11-21 20:15:42.056;2026-11-21 20:15:57.148;2026-11-21 20:15:59.704;2556;2,556;15092;15,092;15;
+22;service-23.git;git@mirror-eu.example.org:/srv/git/platform/service-23.git;completed;0;3;4;2026-11-21 20:15:42.410;2026-11-21 20:15:57.280;2026-11-21 20:16:00.458;3178;3,178;14870;14,870;15;
+23;service-24.git;git@mirror-eu.example.org:/srv/git/platform/service-24.git;completed;0;1;4;2026-11-21 20:15:43.117;2026-11-21 20:15:59.704;2026-11-21 20:16:04.365;4661;4,661;16587;16,587;15;
+24;monorepo.git;git@mirror-eu.example.org:/srv/git/infra/monorepo.git;completed;0;3;4;2026-11-21 20:15:44.276;2026-11-21 20:16:00.458;2026-11-21 20:16:29.587;29129;29,129;16182;16,182;15;
+25;engine.git;git@mirror-eu.example.org:/srv/git/core/engine.git;completed;0;1;4;2026-11-21 20:15:45.027;2026-11-21 20:16:04.365;2026-11-21 20:16:08.637;4272;4,272;19338;19,338;15;
+26;pipeline.git;git@mirror-eu.example.org:/srv/git/data/pipeline.git;completed;0;1;4;2026-11-21 20:15:46.246;2026-11-21 20:16:08.637;2026-11-21 20:16:11.195;2558;2,558;22391;22,391;15;
+27;ios-app.git;git@mirror-eu.example.org:/srv/git/mobile/ios-app.git;completed;3;4;4;2026-11-21 20:15:47.115;2026-11-21 20:16:09.154;2026-11-21 20:16:11.491;2337;2,337;22039;22,039;15;
+28;service-01.git;git@mirror-eu.example.org:/srv/git/platform/service-01.git;completed;0;1;4;2026-11-21 20:15:47.428;2026-11-21 20:16:11.195;2026-11-21 20:16:44.690;33495;33,495;23767;23,767;15;
+29;service-02.git;git@mirror-eu.example.org:/srv/git/platform/service-02.git;completed;0;4;4;2026-11-21 20:15:48.054;2026-11-21 20:16:11.491;2026-11-21 20:16:14.116;2625;2,625;23437;23,437;15;
+30;service-03.git;git@mirror-eu.example.org:/srv/git/platform/service-03.git;completed;0;4;4;2026-11-21 20:15:49.219;2026-11-21 20:16:14.116;2026-11-21 20:16:18.377;4261;4,261;24897;24,897;15;
+31;service-04.git;git@mirror-eu.example.org:/srv/git/platform/service-04.git;completed;0;4;4;2026-11-21 20:15:50.215;2026-11-21 20:16:18.377;2026-11-21 20:16:21.753;3376;3,376;28162;28,162;15;
+32;service-05.git;git@mirror-eu.example.org:/srv/git/platform/service-05.git;completed;0;4;4;2026-11-21 20:15:51.084;2026-11-21 20:16:21.753;2026-11-21 20:16:25.972;4219;4,219;30669;30,669;15;
+33;service-21.git;git@mirror-eu.example.org:/srv/git/platform/service-21.git;failed;0;2;4;2026-11-21 20:15:57.296;2026-11-21 20:16:25.876;2026-11-21 20:16:30.768;4892;4,892;28580;28,580;15;[RemoteRefUpdate[remoteName=refs/heads/main, rejected, 5c6d7e8..0a1b2c3, non-fast-forward]]

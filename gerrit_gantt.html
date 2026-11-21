@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Gerrit Replication – Horizontale Zeitbalken</title>
+  <script src="https://plot.ly"></script>
+  <style>body { font-family: sans-serif; margin: 20px; }</style>
+</head>
+<body>
+  <div id="chart" style="width: 100%; height: 820px;"></div>
+  <script>
+    const tasks = [
+      { id: 1,  repo: "service-01.git", start: "2026-11-21 20:15:15.479", end: "2026-11-21 20:15:18.957", dur: 3.48 },
+      { id: 2,  repo: "service-02.git", start: "2026-11-21 20:15:15.687", end: "2026-11-21 20:15:46.004", dur: 30.32 },
+      { id: 3,  repo: "service-03.git", start: "2026-11-21 20:15:15.850", end: "2026-11-21 20:15:20.146", dur: 4.30 },
+      { id: 4,  repo: "service-04.git", start: "2026-11-21 20:15:16.378", end: "2026-11-21 20:15:21.052", dur: 4.67 },
+      { id: 5,  repo: "service-05.git", start: "2026-11-21 20:15:18.963", end: "2026-11-21 20:15:21.850", dur: 2.89 },
+      { id: 6,  repo: "service-06.git", start: "2026-11-21 20:15:20.149", end: "2026-11-21 20:15:50.019", dur: 29.87 },
+      { id: 7,  repo: "service-07.git", start: "2026-11-21 20:15:21.057", end: "2026-11-21 20:15:24.295", dur: 3.24 },
+      { id: 8,  repo: "service-08.git", start: "2026-11-21 20:15:21.853", end: "2026-11-21 20:15:25.469", dur: 3.62 },
+      { id: 9,  repo: "service-09.git", start: "2026-11-21 20:15:24.297", end: "2026-11-21 20:15:28.892", dur: 4.60 },
+      { id: 10, repo: "service-10.git", start: "2026-11-21 20:15:25.472", end: "2026-11-21 20:15:28.241", dur: 2.77 },
+      { id: 11, repo: "service-11.git", start: "2026-11-21 20:15:28.247", end: "2026-11-21 20:15:57.546", dur: 29.30 },
+      { id: 12, repo: "service-12.git", start: "2026-11-21 20:15:28.895", end: "2026-11-21 20:15:31.126", dur: 2.23 },
+      { id: 13, repo: "service-13.git", start: "2026-11-21 20:15:31.129", end: "2026-11-21 20:15:35.552", dur: 4.42 },
+      { id: 14, repo: "service-14.git", start: "2026-11-21 20:15:35.557", end: "2026-11-21 20:15:39.277", dur: 3.72 },
+      { id: 15, repo: "service-15.git", start: "2026-11-21 20:15:39.280", end: "2026-11-21 20:16:08.800", dur: 29.52 },
+      { id: 16, repo: "service-16.git", start: "2026-11-21 20:15:46.010", end: "2026-11-21 20:15:49.864", dur: 3.85 },
+      { id: 17, repo: "service-17.git", start: "2026-11-21 20:15:49.867", end: "2026-11-21 20:15:54.054", dur: 4.19 },
+      { id: 18, repo: "service-18.git", start: "2026-11-21 20:15:50.021", end: "2026-11-21 20:15:52.747", dur: 2.73 },
+      { id: 19, repo: "service-19.git", start: "2026-11-21 20:15:52.752", end: "2026-11-21 20:15:57.294", dur: 4.54 },
+      { id: 20, repo: "service-20.git", start: "2026-11-21 20:15:54.059", end: "2026-11-21 20:16:25.893", dur: 31.83 },
+      { id: 21, repo: "service-21.git", start: "2026-11-21 20:15:57.296", end: "2026-11-21 20:16:02.188", dur: 4.89 },
+      { id: 22, repo: "service-22.git", start: "2026-11-21 20:15:57.550", end: "2026-11-21 20:16:00.106", dur: 2.56 },
+      { id: 23, repo: "service-23.git", start: "2026-11-21 20:16:00.108", end: "2026-11-21 20:16:03.286", dur: 3.18 },
+      { id: 24, repo: "service-24.git", start: "2026-11-21 20:16:02.190", end: "2026-11-21 20:16:06.851", dur: 4.66 },
+      { id: 25, repo: "monorepo.git",   start: "2026-11-21 20:16:03.292", end: "2026-11-21 20:16:32.421", dur: 29.13 },
+      { id: 26, repo: "engine.git",     start: "2026-11-21 20:16:06.857", end: "2026-11-21 20:16:11.129", dur: 4.27 },
+      { id: 27, repo: "pipeline.git",   start: "2026-11-21 20:16:08.802", end: "2026-11-21 20:16:11.360", dur: 2.56 },
+      { id: 28, repo: "ios-app.git",    start: "2026-11-21 20:16:11.132", end: "2026-11-21 20:16:13.469", dur: 2.34 },
+      { id: 29, repo: "service-01.git", start: "2026-11-21 20:16:11.362", end: "2026-11-21 20:16:44.857", dur: 33.49 },
+      { id: 30, repo: "service-02.git", start: "2026-11-21 20:16:13.472", end: "2026-11-21 20:16:16.097", dur: 2.63 },
+      { id: 31, repo: "service-03.git", start: "2026-11-21 20:16:16.101", end: "2026-11-21 20:16:20.362", dur: 4.26 },
+      { id: 32, repo: "service-04.git", start: "2026-11-21 20:16:20.365", end: "2026-11-21 20:16:23.741", dur: 3.38 },
+      { id: 33, repo: "service-05.git", start: "2026-11-21 20:16:23.746", end: "2026-11-21 20:16:27.965", dur: 4.22 }
+    ];
+
+    const traces = tasks.map((t, idx) => {
+      const isLong = t.dur > 10;
+      return {
+        type: "bar",
+        orientation: "h",
+        base: [new Date(t.start).getTime()],
+        x: [t.dur * 1000],
+        y: [`#${String(t.id).padStart(2, "0")} ${t.repo}`],
+        name: isLong ? "Langläufer (~30 s)" : "Kurzläufer (2–5 s)",
+        legendgroup: isLong ? "long" : "short",
+        showlegend: idx === 0 || idx === 1,
+        marker: { color: isLong ? "#ef4444" : "#3b82f6" },
+        customdata: [[t.repo, t.dur.toFixed(2), t.start, t.end]],
+        hovertemplate: "<b>%{customdata[0]}</b><br>Reine Dauer: %{customdata[1]} s<br>Start: %{customdata[2]}<br>Ende: %{customdata[3]}<extra></extra>"
+      };
+    });
+
+    Plotly.newPlot("chart", traces, {
+      title: "Gerrit Replication: Horizontale Zeitbalken (ohne 15s replicationDelay)",
+      barmode: "overlay",
+      xaxis: { type: "date", title: "Zeitachse (Start- bis Endzeitpunkt)" },
+      yaxis: { autorange: "reversed", title: "Task & Repository" },
+      hovermode: "closest"
+    });
+  </script>
+</body>
+</html>
